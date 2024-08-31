@@ -211,13 +211,12 @@ fn do_write(
 
     let mut written_count = 0;
     for article in articles {
+        let mut related = Vec::new();
         let results = stmt_first.query_map([article.id], |row| {
             let filename: String = row.get(0)?;
             let similarity: f64 = row.get(1)?;
             Ok((filename, similarity))
         })?;
-
-        let mut related = Vec::new();
         for (filename, similarity) in results.map(|x| x.unwrap()) {
             if similarity < MIN_SIMILARITY {
                 continue;
@@ -227,40 +226,47 @@ fn do_write(
             related.push(os_name.to_string_lossy().to_string());
         }
 
-        if !related.is_empty() {
-            let full_path = dir.join(&article.filename);
-            let contents = fs::read_to_string(&full_path)
-                .with_context(|| format!("{}", full_path.display()))?;
-            let (mut fm, fm_size) = extract_front_matter(&contents)?;
-            let body: String = contents
-                .lines()
-                .skip(fm_size + 2) // Add the two dashes lines we must also skip
-                .collect::<Vec<&str>>()
-                .join("\n");
-
-            fm.related = related;
-            let y = serde_yaml::to_string(&fm)?;
-
-            let mut writer: Box<dyn io::Write> = if is_dry_run {
-                let article_changed = article.filename.file_name().unwrap().to_string_lossy();
-                let spaces = "+".repeat((width - (article_changed.len() + 2)) / 2);
-                println!("\n\n{spaces} {article_changed} {spaces}");
-                Box::new(io::stdout())
-            } else if is_backup {
-                let mut bak = full_path.clone();
-                bak.set_extension("BAK");
-                fs::rename(&full_path, bak)?;
-                Box::new(File::create_new(&full_path)?)
-            } else {
-                Box::new(File::create(&full_path)?)
-            };
-            writeln!(writer, "---")?;
-            write!(writer, "{y}")?;
-            writeln!(writer, "---")?;
-            write!(writer, "{body}")?;
-
-            written_count += 1;
+        if related.is_empty() {
+            // No other articles are similar enough
+            continue;
         }
+
+        let full_path = dir.join(&article.filename);
+        let contents =
+            fs::read_to_string(&full_path).with_context(|| format!("{}", full_path.display()))?;
+        let (mut fm, fm_size) = extract_front_matter(&contents)?;
+        if !fm.related.is_empty() {
+            // Don't overwrite existing related articles
+            continue;
+        }
+        let body: String = contents
+            .lines()
+            .skip(fm_size + 2) // Add the two dashes lines we must also skip
+            .collect::<Vec<&str>>()
+            .join("\n");
+
+        fm.related = related;
+        let y = serde_yaml::to_string(&fm)?;
+
+        let mut writer: Box<dyn io::Write> = if is_dry_run {
+            let article_changed = article.filename.file_name().unwrap().to_string_lossy();
+            let spaces = "+".repeat((width - (article_changed.len() + 2)) / 2);
+            println!("\n\n{spaces} {article_changed} {spaces}");
+            Box::new(io::stdout())
+        } else if is_backup {
+            let mut bak = full_path.clone();
+            bak.set_extension("BAK");
+            fs::rename(&full_path, bak)?;
+            Box::new(File::create_new(&full_path)?)
+        } else {
+            Box::new(File::create(&full_path)?)
+        };
+        writeln!(writer, "---")?;
+        write!(writer, "{y}")?;
+        writeln!(writer, "---")?;
+        write!(writer, "{body}")?;
+
+        written_count += 1;
     }
     println!("\nUpdated {written_count} posts");
 
@@ -460,7 +466,11 @@ struct FrontMatter {
     url: Option<String>,
     #[serde(default)]
     tags: Vec<String>,
-    #[serde(rename = "showSummary", default)]
+    #[serde(
+        rename = "showSummary",
+        default,
+        skip_serializing_if = "std::ops::Not::not"
+    )]
     show_summary: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     summary: Option<String>,
