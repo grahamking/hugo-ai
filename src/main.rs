@@ -6,7 +6,11 @@ use std::env;
 use std::fs;
 use std::process;
 
+mod article;
+mod front_matter;
+mod openai;
 mod similar;
+mod summary;
 
 const DB_NAME: &str = "hugo-ai.db";
 const CFG_DIR: &str = ".config/hugo-ai";
@@ -26,7 +30,14 @@ enum Commands {
     Similar {
         #[clap(subcommand)]
         subcommand: similar::Commands,
-    }, // Summarize
+    },
+    Summary {
+        /// The directory with the markdown files
+        directory: String,
+        /// Do no backup the file as a .BAK
+        #[clap(long)]
+        no_backup: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -45,5 +56,9 @@ fn main() -> anyhow::Result<()> {
     };
     match cli.command {
         Commands::Similar { subcommand } => similar::run(&db_path, subcommand),
+        Commands::Summary {
+            directory,
+            no_backup,
+        } => summary::run(&directory, !no_backup),
     }
 }

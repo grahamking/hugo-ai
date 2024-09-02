@@ -1,8 +1,12 @@
 # hugo-ai
 
+*DANGER* This might delete some parts of your blog posts. Do not use without a very good backup.
+
 AI tools for the [Hugo](https://gohugo.io/) static site generator.
 
-So far only one tool: *Calculate related posts*. This uses an OpenAI model to calculate an embedding (a vector representation of your blog post in latent space) for each post, and then finds other posts that are near it in that latent space. Those are similar. It then writes that into your blog's markdown files so you can do "What to read next" or "Similar posts" or "You might also like", that kind of thing.
+*Calculate related posts*: This uses an OpenAI model to calculate an embedding (a vector representation of your blog post in latent space) for each post, and then finds other posts that are near it in that latent space. Those are similar. It then writes that into your blog's markdown files so you can do "What to read next" or "Similar posts" or "You might also like", that kind of thing.
+
+*Summarize*: Generate a one-paragraph summary of the post and add it to the front-matter as `synopsis` field. It doesn't use "summary" because that already means something to Hugo.
 
 ## Prerequisites
 
@@ -14,6 +18,8 @@ So far only one tool: *Calculate related posts*. This uses an OpenAI model to ca
 ## Install
 
 No releases yet so you have to build from the Rust source. `cargo build --release` in project root should do it. It puts the binary in `target/release/hugo-ai`.
+
+# Similar posts
 
 ## Generate similar / related posts
 
@@ -76,6 +82,26 @@ Then in `themes/<theme>/layouts/partials` I created `related.html` like this:
 ```
 
 Hopefully that's sufficient to get you going.
+
+# Summaries
+
+Set environment variable OPENAI_API_KEY to your key: `export OPENAI_API_KEY=<here>`
+
+Generate: `hugo-ai summary ~/src/my-blog/content/posts/`
+
+This takes a while. It makes a call to OpenAI for every post. It uses the 4o-mini model to avoid usage limits, and because I found it produces very similar summaries to the big model. Summarizing my entire blog costs me less than $2.
+
+It overwrites your Markdown file, adding a `synopsis` field.
+
+Edit your `themes/<theme>/layouts/_default/single.html` and add the summary. HTML has a very nice element specifically for this:
+```
+{{ with .Params.Synopsis }}
+    <details id="synopsis">
+            <summary>Summary</summary>
+            <div>{{ . }}</div>
+    </details>
+{{- end }}
+```
 
 ---
 

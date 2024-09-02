@@ -11,12 +11,12 @@ use std::process;
 
 use anyhow::Context;
 use rusqlite::OptionalExtension;
-use serde::{Deserialize, Serialize};
+
+use super::article::Article;
+use super::front_matter::FrontMatter;
 
 mod db;
 
-const CHUNK_SIZE: usize = 2000;
-const MIN_CHUNK: usize = 2500;
 const MIN_SIMILARITY: f64 = 0.4;
 
 #[derive(clap::Subcommand)]
@@ -28,15 +28,15 @@ pub enum Commands {
     },
 
     /// 2. Call OpenAI's text-embedding-3-small for each chunk, store in db.
-    /// This part costs money (my whole blog costs less than $0.01) and requires
-    /// an OpenAI API key in environment variable OPENAI_API_KEY
+    ///    This part costs money (my whole blog costs less than $0.01) and requires
+    ///    an OpenAI API key in environment variable OPENAI_API_KEY
     Embed,
 
     /// 3. Iterate all the articles comparing them pair-wise and store the results in db
     Calc,
 
     /// 4. Write a list of related articles to the front-matter of each of your blog posts.
-    /// Backup your files first!
+    ///    Backup your files first!
     Write {
         /// The directory to embed
         directory: String,
@@ -64,17 +64,6 @@ pub fn run(db_path: &str, cmd: Commands) -> anyhow::Result<()> {
         } => do_write(db_path, &directory, dry_run, !no_backup),
         Commands::FixUp => do_fixup(db_path),
     }
-}
-
-#[derive(Debug)]
-struct Article {
-    id: usize,
-    title: String,
-    url: String,
-    date: Option<chrono::DateTime<chrono::FixedOffset>>,
-    filename: path::PathBuf,
-    is_draft: bool,
-    chunks: Vec<String>,
 }
 
 fn do_gather(db_path: &str, dir: &str) -> anyhow::Result<()> {
@@ -124,7 +113,7 @@ fn do_embed(db_path: &str) -> anyhow::Result<()> {
                 // this means if the text changes need to edit db to force this
                 continue;
             }
-            let embed = fetch_embed(&api_key, &text)?;
+            let embed = super::openai::embed(&api_key, &text)?;
             stmt.execute((f64_vec_to_u8_vec(embed), chunk_id, article.id))?;
         }
         stmt.finalize()?;
@@ -234,7 +223,7 @@ fn do_write(
         let full_path = dir.join(&article.filename);
         let contents =
             fs::read_to_string(&full_path).with_context(|| format!("{}", full_path.display()))?;
-        let (mut fm, fm_size) = extract_front_matter(&contents)?;
+        let (mut fm, fm_size) = FrontMatter::extract(&contents)?;
         if !fm.related.is_empty() {
             // Don't overwrite existing related articles
             continue;
@@ -289,8 +278,7 @@ fn load_all_active_articles(db_conn: &rusqlite::Connection) -> anyhow::Result<Ve
         // Attempt to parse the date if it exists
         let date = date
             .as_deref()
-            .map(|d| chrono::DateTime::parse_from_rfc3339(d).ok())
-            .flatten();
+            .and_then(|d| chrono::DateTime::parse_from_rfc3339(d).ok());
 
         Ok(Article {
             id,
@@ -317,12 +305,12 @@ fn compare_articles(
     a: &Article,
     b: &Article,
 ) -> anyhow::Result<f64> {
-    let a_chunks = load_embed_chunks(&db_conn, a.id)?;
-    let b_chunks = load_embed_chunks(&db_conn, b.id)?;
+    let a_chunks = load_embed_chunks(db_conn, a.id)?;
+    let b_chunks = load_embed_chunks(db_conn, b.id)?;
     let mut simis = Vec::new();
     for (_, _, a_embedding) in a_chunks.into_iter() {
         for (_, _, b_embedding) in b_chunks.iter() {
-            let v = cosine_similarity(&a_embedding, &b_embedding);
+            let v = cosine_similarity(&a_embedding, b_embedding);
             simis.push(v);
         }
     }
@@ -344,7 +332,7 @@ fn load_embed_chunks(
         out.push((
             chunk_id,
             text,
-            blob.map(|b| u8_vec_to_f64_vec(b)).unwrap_or_default(),
+            blob.map(u8_vec_to_f64_vec).unwrap_or_default(),
         ));
     }
     Ok(out)
@@ -356,7 +344,7 @@ fn load_embed_chunks(
 // - Insert them into article_chunk
 fn gather_file(db_conn: &rusqlite::Connection, filepath: &path::Path) -> anyhow::Result<Article> {
     let contents = fs::read_to_string(filepath)?;
-    let article = parse_to_article(&filepath, &contents)?;
+    let article = Article::parse(filepath, &contents)?;
     let mut stmt = db_conn.prepare(
         r#"INSERT INTO article (filename, title, url, date, is_draft)
         VALUES (?1, ?2, ?3, ?4, ?5)
@@ -395,158 +383,6 @@ fn gather_file(db_conn: &rusqlite::Connection, filepath: &path::Path) -> anyhow:
     Ok(article)
 }
 
-#[derive(Debug, Serialize)]
-struct EmbedRequest<'a> {
-    model: &'static str,
-    input: &'a str,
-}
-
-#[derive(Debug, Deserialize)]
-struct EmbedResponse {
-    data: Vec<Embedding>,
-}
-
-#[derive(Debug, Deserialize)]
-struct Embedding {
-    embedding: Vec<f64>,
-}
-
-fn fetch_embed(key: &str, body: &str) -> anyhow::Result<Vec<f64>> {
-    let req = EmbedRequest {
-        model: "text-embedding-3-small",
-        input: body,
-    };
-    let client = reqwest::blocking::Client::new();
-    let res = client
-        .post("https://api.openai.com/v1/embeddings")
-        .bearer_auth(key)
-        .json(&req)
-        .send()?;
-    if res.status() != http::StatusCode::OK {
-        return Err(anyhow::anyhow!("HTTP error {}", res.status()));
-    }
-    let mut out: EmbedResponse = res.json()?;
-    Ok(out.data.remove(0).embedding)
-
-    /* Example response
-    {
-      "object": "list",
-      "data": [
-        {
-          "object": "embedding",
-          "index": 0,
-          "embedding": [
-            -0.006929283495992422,
-            -0.005336422007530928,
-            ... (omitted for spacing)
-            -4.547132266452536e-05,
-            -0.024047505110502243
-          ],
-        }
-      ],
-      "model": "text-embedding-3-small",
-      "usage": {
-        "prompt_tokens": 5,
-        "total_tokens": 5
-      }
-    }
-    */
-}
-
-// Metadata at the top of a Hugo post
-#[allow(dead_code)]
-#[derive(serde::Deserialize, serde::Serialize, Debug)]
-struct FrontMatter {
-    title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    author: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    r#type: Option<String>,
-    date: String,
-    url: Option<String>,
-    #[serde(default)]
-    tags: Vec<String>,
-    #[serde(
-        rename = "showSummary",
-        default,
-        skip_serializing_if = "std::ops::Not::not"
-    )]
-    show_summary: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    summary: Option<String>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    draft: bool,
-
-    // This is the field we set
-    #[serde(default)]
-    related: Vec<String>,
-}
-
-impl From<FrontMatter> for Article {
-    fn from(fm: FrontMatter) -> Self {
-        Article {
-            id: 0, // we don't know yet
-            title: fm.title,
-            url: fm.url.unwrap_or_default(),
-            date: chrono::DateTime::parse_from_rfc3339(&fm.date).ok(),
-            filename: path::PathBuf::new(),
-            is_draft: fm.draft,
-            chunks: vec![],
-        }
-    }
-}
-
-// Extract the front matter, the part between the dashes
-// It's valid yaml
-fn extract_front_matter(s: &str) -> anyhow::Result<(FrontMatter, usize)> {
-    let line_iter = s.lines().skip(1); // skip first "---" line
-    let front_matter_vec = line_iter
-        .take_while(|line| !line.starts_with("---"))
-        .collect::<Vec<&str>>();
-
-    let fm: FrontMatter = serde_yaml::from_str(&front_matter_vec.join("\n"))?;
-    Ok((fm, front_matter_vec.len()))
-}
-
-fn parse_to_article(filepath: &path::Path, s: &str) -> anyhow::Result<Article> {
-    let (fm, fm_size) = extract_front_matter(s)?;
-
-    let header = vec![fm.title.clone(), fm.date.clone()];
-
-    // Now gather the body into CHUNK_SIZE chunks
-
-    let mut body: String = s
-        .lines()
-        .skip(fm_size + 2) // Add the two dashes lines we must also skip
-        .collect::<Vec<&str>>()
-        .join("\n");
-    let mut chunks = Vec::new();
-    while body.len() > MIN_CHUNK {
-        let mut split_pos = CHUNK_SIZE;
-        while split_pos < body.len() && body.as_bytes()[split_pos] != b' ' {
-            split_pos += 1;
-        }
-        let rest = body.split_off(split_pos);
-        let mut embed_unit = header.join("\n");
-        embed_unit.push_str("\n\n");
-        embed_unit.push_str(&body);
-        chunks.push(embed_unit);
-        body = rest;
-    }
-
-    // Add the title and date to each chunk
-    // I figure it helps the embedding
-
-    let mut embed_unit = header.join("\n");
-    embed_unit.push_str(&body);
-    chunks.push(embed_unit);
-
-    let mut article: Article = fm.into();
-    article.chunks = chunks;
-    article.filename = filepath.to_path_buf();
-    Ok(article)
-}
-
 fn f64_vec_to_u8_vec(vec: Vec<f64>) -> Vec<u8> {
     let mut u8_vec: Vec<u8> = Vec::with_capacity(vec.len() * std::mem::size_of::<f64>());
     for num in vec {
@@ -570,7 +406,7 @@ fn do_fixup(_db_path: &str) -> anyhow::Result<()> {
     for entry in fs::read_dir(dir)? {
         let filepath = entry?.path();
         let s = fs::read_to_string(&filepath)?;
-        let a = parse_to_article(&filepath, &s)?;
+        let a = Article::parse(&filepath, &s)?;
         println!("{a:?}");
     }
 
