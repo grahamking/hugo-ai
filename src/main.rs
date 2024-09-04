@@ -1,12 +1,13 @@
 // MIT License
 // Copyright (c) 2024 Graham King
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::env;
 use std::fs;
 use std::process;
 
 mod article;
+mod claude;
 mod front_matter;
 mod openai;
 mod similar;
@@ -34,10 +35,25 @@ enum Commands {
     Summary {
         /// The directory with the markdown files
         directory: String,
+
         /// Do no backup the file as a .BAK
         #[clap(long)]
         no_backup: bool,
+
+        /// Use big model (gpt-4o or claude-3.5-sonnet) or
+        /// small model (gpt-4o-mini or claude-3-haiku)
+        #[clap(long)]
+        model: ModelChoice,
     },
+}
+
+#[derive(Default, Clone, Copy, ValueEnum)]
+enum ModelChoice {
+    #[default]
+    Gpt4o,
+    Gpt4oMini,
+    Claude35Sonnet,
+    Claude3Haiku,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -59,6 +75,7 @@ fn main() -> anyhow::Result<()> {
         Commands::Summary {
             directory,
             no_backup,
-        } => summary::run(&directory, !no_backup),
+            model,
+        } => summary::run(&directory, model, !no_backup),
     }
 }

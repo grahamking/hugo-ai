@@ -1,13 +1,11 @@
 // MIT License
 // Copyright (c) 2024 Graham King
 
-use std::env;
 use std::fs;
 use std::fs::File;
 use std::io;
 use std::io::Write;
 use std::path;
-use std::process;
 
 use anyhow::Context;
 use rusqlite::OptionalExtension;
@@ -84,10 +82,6 @@ fn do_gather(db_path: &str, dir: &str) -> anyhow::Result<()> {
 }
 
 fn do_embed(db_path: &str) -> anyhow::Result<()> {
-    let Ok(api_key) = env::var("OPENAI_API_KEY") else {
-        eprintln!("Set variable OPENAI_KEY to your key");
-        process::exit(2);
-    };
     let mut db_conn = rusqlite::Connection::open(db_path)?;
 
     let articles = load_all_active_articles(&db_conn)?;
@@ -113,7 +107,7 @@ fn do_embed(db_path: &str) -> anyhow::Result<()> {
                 // this means if the text changes need to edit db to force this
                 continue;
             }
-            let embed = super::openai::embed(&api_key, &text)?;
+            let embed = super::openai::embed(&text)?;
             stmt.execute((f64_vec_to_u8_vec(embed), chunk_id, article.id))?;
         }
         stmt.finalize()?;

@@ -7,7 +7,8 @@ const SUMMARIZE_SYSTEM_PROMPT: &str =
 //const SUMMARIZE_PROMPT: &str = "Read this blog post and then teach me the content in one short, concise paragraph. Use an active voice. Be direct. Only cover the key points.";
 const SUMMARIZE_PROMPT: &str = "Re-write this as a single short concise paragraph, using an active voice. Be direct. Only cover the key points.";
 
-const CHAT_MODEL: &str = "gpt-4o-mini"; // "gpt-4o" or "gpt-4o-mini", or any other OpenAI model
+pub const CHAT_MODEL_BIG: &str = "gpt-4o";
+pub const CHAT_MODEL_SMALL: &str = "gpt-4o-mini";
 
 #[derive(Debug, serde::Serialize)]
 struct EmbedRequest<'a> {
@@ -26,7 +27,10 @@ struct Embedding {
 }
 
 /// Use model text-embedding-3-small to calculate an embedding for this string
-pub fn embed(key: &str, body: &str) -> anyhow::Result<Vec<f64>> {
+pub fn embed(body: &str) -> anyhow::Result<Vec<f64>> {
+    let Ok(api_key) = std::env::var("OPENAI_API_KEY") else {
+        return Err(anyhow::anyhow!("Set variable OPENAI_API_KEY to your key"));
+    };
     let req = EmbedRequest {
         model: "text-embedding-3-small",
         input: body,
@@ -34,7 +38,7 @@ pub fn embed(key: &str, body: &str) -> anyhow::Result<Vec<f64>> {
     let client = reqwest::blocking::Client::new();
     let res = client
         .post("https://api.openai.com/v1/embeddings")
-        .bearer_auth(key)
+        .bearer_auth(api_key)
         .json(&req)
         .send()?;
     if res.status() != http::StatusCode::OK {
@@ -91,9 +95,13 @@ struct ChatResponseChoice {
 }
 
 /// Use 4o to summarize the given string
-pub fn summarize(key: &str, s: &str) -> anyhow::Result<String> {
+pub fn summarize(model: &'static str, s: &str) -> anyhow::Result<String> {
+    let Ok(api_key) = std::env::var("OPENAI_API_KEY") else {
+        return Err(anyhow::anyhow!("Set variable OPENAI_API_KEY to your key"));
+    };
+
     let req = ChatRequest {
-        model: CHAT_MODEL,
+        model,
         messages: vec![
             ChatMessage {
                 role: "system".to_string(),
@@ -108,7 +116,7 @@ pub fn summarize(key: &str, s: &str) -> anyhow::Result<String> {
     let client = reqwest::blocking::Client::new();
     let res = client
         .post("https://api.openai.com/v1/chat/completions")
-        .bearer_auth(key)
+        .bearer_auth(api_key)
         .json(&req)
         .send()?;
     if res.status() != http::StatusCode::OK {

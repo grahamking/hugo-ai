@@ -55,14 +55,20 @@ impl From<FrontMatter> for Article {
 }
 
 impl FrontMatter {
-    // Extract the front matter, the part between the dashes
-    // It's valid yaml
-    pub fn extract(s: &str) -> anyhow::Result<(FrontMatter, usize)> {
+    /// Takes a blog post and returns only the front matter lines,
+    /// without the separators.
+    pub fn select(s: &str) -> Vec<&str> {
         let line_iter = s.lines().skip(1); // skip first "---" line
         let front_matter_vec = line_iter
             .take_while(|line| !line.starts_with("---"))
             .collect::<Vec<&str>>();
+        front_matter_vec
+    }
 
+    // Extract the front matter, the part between the dashes
+    // It's valid yaml
+    pub fn extract(s: &str) -> anyhow::Result<(FrontMatter, usize)> {
+        let front_matter_vec = FrontMatter::select(&s);
         let fm: FrontMatter = serde_yaml::from_str(&front_matter_vec.join("\n"))?;
         Ok((fm, front_matter_vec.len()))
     }
