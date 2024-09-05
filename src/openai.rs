@@ -1,12 +1,6 @@
 // MIT License
 // Copyright (c) 2024 Graham King
 
-const SUMMARIZE_SYSTEM_PROMPT: &str =
-    "Respond in the first-person as if you are the author. Never refer to the blog post directly.";
-
-//const SUMMARIZE_PROMPT: &str = "Read this blog post and then teach me the content in one short, concise paragraph. Use an active voice. Be direct. Only cover the key points.";
-const SUMMARIZE_PROMPT: &str = "Re-write this as a single short concise paragraph, using an active voice. Be direct. Only cover the key points.";
-
 pub const CHAT_MODEL_BIG: &str = "gpt-4o";
 pub const CHAT_MODEL_SMALL: &str = "gpt-4o-mini";
 
@@ -94,25 +88,25 @@ struct ChatResponseChoice {
     message: ChatMessage,
 }
 
-/// Use 4o to summarize the given string
-pub fn summarize(model: &'static str, s: &str) -> anyhow::Result<String> {
+pub fn message(model: &'static str, s: &str, prompts: super::Prompts) -> anyhow::Result<String> {
     let Ok(api_key) = std::env::var("OPENAI_API_KEY") else {
         return Err(anyhow::anyhow!("Set variable OPENAI_API_KEY to your key"));
     };
 
-    let req = ChatRequest {
-        model,
-        messages: vec![
+    let mut messages = vec![ChatMessage {
+        role: "user".to_string(),
+        content: format!("{}\n\n{s}", prompts.user),
+    }];
+    if !prompts.system.is_empty() {
+        messages.insert(
+            0,
             ChatMessage {
                 role: "system".to_string(),
-                content: SUMMARIZE_SYSTEM_PROMPT.to_string(),
+                content: prompts.system.to_string(),
             },
-            ChatMessage {
-                role: "user".to_string(),
-                content: format!("{SUMMARIZE_PROMPT}\n\n{s}"),
-            },
-        ],
-    };
+        );
+    }
+    let req = ChatRequest { model, messages };
     let client = reqwest::blocking::Client::new();
     let res = client
         .post("https://api.openai.com/v1/chat/completions")

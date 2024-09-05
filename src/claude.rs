@@ -1,11 +1,6 @@
 // MIT License
 // Copyright (c) 2024 Graham King
 
-const SUMMARIZE_SYSTEM_PROMPT: &str =
-    "Respond in the first-person as if you are the author. Never refer to the blog post directly.";
-
-const SUMMARIZE_PROMPT: &str = "Re-write this as a single short concise paragraph, using an active voice. Be direct. Only cover the key points.";
-
 pub const CHAT_MODEL_BIG: &str = "claude-3-5-sonnet-20240620";
 pub const CHAT_MODEL_SMALL: &str = "claude-3-haiku-20240307";
 
@@ -13,6 +8,7 @@ pub const CHAT_MODEL_SMALL: &str = "claude-3-haiku-20240307";
 struct ChatRequest {
     model: &'static str,
     max_tokens: usize,
+    #[serde(skip_serializing_if = "str::is_empty")]
     system: &'static str,
     messages: Vec<ChatMessage>,
 }
@@ -32,7 +28,7 @@ struct ChatResponseText {
     text: String,
 }
 
-pub fn summarize(model: &'static str, s: &str) -> anyhow::Result<String> {
+pub fn message(model: &'static str, s: &str, prompts: super::Prompts) -> anyhow::Result<String> {
     let Ok(api_key) = std::env::var("ANTHROPIC_API_KEY") else {
         return Err(anyhow::anyhow!(
             "Set variable ANTHROPIC_API_KEY to your key"
@@ -41,10 +37,10 @@ pub fn summarize(model: &'static str, s: &str) -> anyhow::Result<String> {
     let req = ChatRequest {
         model,
         max_tokens: 1024,
-        system: SUMMARIZE_SYSTEM_PROMPT,
+        system: prompts.system,
         messages: vec![ChatMessage {
             role: "user".to_string(),
-            content: format!("{SUMMARIZE_PROMPT}\n\n{s}"),
+            content: format!("{}\n\n{s}", prompts.user),
         }],
     };
     let client = reqwest::blocking::Client::new();

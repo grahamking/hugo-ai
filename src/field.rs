@@ -11,9 +11,23 @@ use crate::claude;
 use crate::front_matter::FrontMatter;
 use crate::openai;
 
-pub fn run(dir: &str, model: super::ModelChoice, is_backup: bool) -> anyhow::Result<()> {
+/// Fill a meta-data/front-matter field on each blog post using a set of prompts and a model
+pub fn run(
+    // The directory to look for Hugo Markdown posts in
+    dir: &str,
+    // The magic
+    model: super::ModelChoice,
+    // If true backup the file to a .BAK
+    is_backup: bool,
+    // The name of the front-matter field to populate
+    field_name: &'static str,
+    // System and user prompts to send to the model
+    prompts: super::Prompts,
+    // Ignore posts shorter than this
+    min_len: usize,
+) -> anyhow::Result<()> {
     let posts: Vec<fs::DirEntry> = fs::read_dir(dir)?.map(|x| x.unwrap()).collect();
-    println!("Summarizing {} posts", posts.len());
+    println!("Processing {} posts", posts.len());
 
     let mut written_count = 0;
     for entry in posts.into_iter() {
@@ -21,13 +35,14 @@ pub fn run(dir: &str, model: super::ModelChoice, is_backup: bool) -> anyhow::Res
         let s = fs::read_to_string(&filepath)?;
         let front_matter_vec = FrontMatter::select(&s);
         let mut fm: HashMap<String, serde_yaml::Value> =
-            serde_yaml::from_str(&front_matter_vec.join("\n"))?;
+            serde_yaml::from_str(&front_matter_vec.join("\n"))
+                .context(filepath.display().to_string())?;
         if matches!(fm.get("draft"), Some(serde_yaml::Value::Bool(true))) {
-            // Don't summarize drafts as they will change
+            // Don't process drafts as they will change
             continue;
         }
-        if fm.contains_key("synopsis") {
-            // Skip if it already has a summary
+        if fm.contains_key(field_name) {
+            // Skip if it already has one
             continue;
         }
 
@@ -36,21 +51,24 @@ pub fn run(dir: &str, model: super::ModelChoice, is_backup: bool) -> anyhow::Res
             .skip(front_matter_vec.len() + 2) // Add the two dashes lines we must also skip
             .collect::<Vec<&str>>()
             .join("\n");
-        if body.len() < 1000 {
-            // Too short to be worth summarizing
+        if body.len() < min_len {
+            // Too short to be interesting
             continue;
         }
 
         use super::ModelChoice::*;
-        let maybe_summary = match model {
-            Gpt4o => openai::summarize(openai::CHAT_MODEL_BIG, &body),
-            Gpt4oMini => openai::summarize(openai::CHAT_MODEL_SMALL, &body),
-            Claude35Sonnet => claude::summarize(claude::CHAT_MODEL_BIG, &body),
-            Claude3Haiku => claude::summarize(claude::CHAT_MODEL_SMALL, &body),
+        let maybe = match model {
+            Gpt4o => openai::message(openai::CHAT_MODEL_BIG, &body, prompts),
+            Gpt4oMini => openai::message(openai::CHAT_MODEL_SMALL, &body, prompts),
+            Claude35Sonnet => claude::message(claude::CHAT_MODEL_BIG, &body, prompts),
+            Claude3Haiku => claude::message(claude::CHAT_MODEL_SMALL, &body, prompts),
         };
-        let summary = maybe_summary.context(filepath.display().to_string().clone())?;
+        let field_value = maybe.context(filepath.display().to_string())?;
 
-        fm.insert("synopsis".to_string(), serde_yaml::Value::String(summary));
+        fm.insert(
+            field_name.to_string(),
+            serde_yaml::Value::String(field_value),
+        );
 
         let y = serde_yaml::to_string(&fm)?;
         let mut writer: Box<dyn io::Write> = if is_backup {
@@ -67,7 +85,7 @@ pub fn run(dir: &str, model: super::ModelChoice, is_backup: bool) -> anyhow::Res
         write!(writer, "{body}")?;
 
         written_count += 1;
-        println!("Summarized: {}", filepath.display());
+        println!("Processed: {}", filepath.display());
     }
 
     println!("\nUpdated {written_count} posts");

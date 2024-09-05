@@ -8,10 +8,10 @@ use std::process;
 
 mod article;
 mod claude;
+mod field;
 mod front_matter;
 mod openai;
 mod similar;
-mod summary;
 
 const DB_NAME: &str = "hugo-ai.db";
 const CFG_DIR: &str = ".config/hugo-ai";
@@ -45,6 +45,19 @@ enum Commands {
         #[clap(long)]
         model: ModelChoice,
     },
+    Tagline {
+        /// The directory with the markdown files
+        directory: String,
+
+        /// Do no backup the file as a .BAK
+        #[clap(long)]
+        no_backup: bool,
+
+        /// Use big model (gpt-4o or claude-3.5-sonnet) or
+        /// small model (gpt-4o-mini or claude-3-haiku)
+        #[clap(long)]
+        model: ModelChoice,
+    },
 }
 
 #[derive(Default, Clone, Copy, ValueEnum)]
@@ -55,6 +68,23 @@ enum ModelChoice {
     Claude35Sonnet,
     Claude3Haiku,
 }
+
+#[derive(Clone, Copy, Debug)]
+struct Prompts {
+    system: &'static str,
+    user: &'static str,
+}
+
+const SUMMARIZE_PROMPTS: Prompts = Prompts{
+    system: "Respond in the first-person as if you are the author. Never refer to the blog post directly.",
+    user: "Re-write this as a single short concise paragraph, using an active voice. Be direct. Only cover the key points.",
+};
+
+const TAGLINE_PROMPTS: Prompts = Prompts {
+    system: "Use the past tense",
+    //user: "Write a tagline for this blog post. Try to make it witty, funny, light hearted. Answer with only the tagline. Answer in a single short sentence.",
+    user: "Write a tagline for this blog post. Answer with only the tagline. Answer in a single short sentence.",
+};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -76,6 +106,25 @@ fn main() -> anyhow::Result<()> {
             directory,
             no_backup,
             model,
-        } => summary::run(&directory, model, !no_backup),
+        } => field::run(
+            &directory,
+            model,
+            !no_backup,
+            "synopsis",
+            SUMMARIZE_PROMPTS,
+            1000,
+        ),
+        Commands::Tagline {
+            directory,
+            no_backup,
+            model,
+        } => field::run(
+            &directory,
+            model,
+            !no_backup,
+            "tagline",
+            TAGLINE_PROMPTS,
+            1000,
+        ),
     }
 }
