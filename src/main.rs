@@ -83,7 +83,8 @@ const SUMMARIZE_PROMPTS: Prompts = Prompts{
 const TAGLINE_PROMPTS: Prompts = Prompts {
     system: "Use the past tense",
     //user: "Write a tagline for this blog post. Try to make it witty, funny, light hearted. Answer with only the tagline. Answer in a single short sentence.",
-    user: "Write a tagline for this blog post. Answer with only the tagline. Answer in a single short sentence.",
+    //user: "Write a tagline for this blog post. Answer with only the tagline. Answer in a single short sentence.",
+    user: "First read this blog post and decide what tone and sentiment it has. Next, write a tagline for it using the same tone and sentiment. For example funny blogs posts should get a light hearted tagline and serious posts should get a direct and informative tagline. Answer only with the tagline. Answer in a single short sentence."
 };
 
 fn main() -> anyhow::Result<()> {
